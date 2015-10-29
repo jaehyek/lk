@@ -60,7 +60,6 @@ enum ftm_item_index {
 	LGFTM_BUYER                    = 32,
 	LGFTM_THEME_ITEM               = 33,
 	LGFTM_FORCE_FRST_ON_PIF        = 35,
-	LGFTM_SKU                      = 39,
 	LGFTM_WORK_FRST_MODE           = 40,
 
 	/* 101~ Use for LK & Etc
@@ -103,7 +102,6 @@ enum ftm_item_index {
 #define LGFTM_DISPLAY_KCAL_SIZE                4
 #define LGFTM_DLOAD_FACTORY_RESET_FLAG_SIZE    1
 #define LGFTM_IMEI_SIZE                        20
-#define LGFTM_SKU_SIZE                         30
 #define LGFTM_SW_VERSION_SIZE                  50
 #define LGFTM_SW_ORIGINAL_VERSION_SIZE         50
 #define LGFTM_QFUSE_BLOWNED_SIZE               20

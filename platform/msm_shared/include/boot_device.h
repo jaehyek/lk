@@ -49,6 +49,9 @@ enum boot_device
 enum boot_device
 {
 	BOOT_DEFAULT=0, /* EMMC */
+#if PLRTEST_ENABLE
+	BOOT_SDCARD=1,
+#endif
 	BOOT_EMMC=2,
 	BOOT_UFS=4,
 };

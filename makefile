@@ -132,6 +132,7 @@ include target/rules.mk
 include kernel/rules.mk
 include dev/rules.mk
 include app/rules.mk
+include plrtest/rules.mk
 
 # recursively include any modules in the MODULE variable, leaving a trail of included
 # modules in the ALLMODULES list

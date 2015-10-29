@@ -6,10 +6,11 @@ INCLUDES += -I$(LK_TOP_DIR)/dev/gcdb/display -I$(LK_TOP_DIR)/dev/gcdb/display/in
 PLATFORM := msm8952
 
 MEMBASE := 0x8F600000 # SDRAM
-MEMSIZE := 0x00100000 # 1MB
+#MEMSIZE := 0x00100000 # 1MB
+MEMSIZE := 0x30000000 # 768MB
 
 BASE_ADDR        := 0x80000000
-SCRATCH_ADDR     := 0x90000000
+SCRATCH_ADDR     := 0xC0000000
 
 DEFINES += DISPLAY_SPLASH_SCREEN=1
 DEFINES += DISPLAY_TYPE_MIPI=1
@@ -38,7 +39,6 @@ DEFINES += \
 OBJS += \
 	$(LOCAL_DIR)/init.o \
 	$(LOCAL_DIR)/meminfo.o \
-	$(LOCAL_DIR)/target_display.o \
 	$(LOCAL_DIR)/oem_panel.o
 ifeq ($(ENABLE_SMD_SUPPORT),1)
 OBJS += \

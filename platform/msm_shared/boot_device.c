@@ -58,6 +58,8 @@ uint32_t platform_boot_dev_isemmc()
 #if USE_MDM_BOOT_CFG
 	/* For MDM default boot device is NAND */
 	if (boot_dev_type == BOOT_EMMC)
+#elif PLRTEST_ENABLE
+	if (boot_dev_type == BOOT_EMMC || boot_dev_type == BOOT_DEFAULT || boot_dev_type == BOOT_SDCARD)
 #else
 	if (boot_dev_type == BOOT_EMMC || boot_dev_type == BOOT_DEFAULT)
 #endif

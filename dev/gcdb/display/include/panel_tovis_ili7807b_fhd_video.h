@@ -2034,28 +2034,10 @@ static char tovis_ili7807b_fhd_video_on_cmd489[] = {
 };
 
 static char tovis_ili7807b_fhd_video_on_cmd490[] = {
-	0x55, 0x80, 0x15, 0x80
-};
-
-static char tovis_ili7807b_fhd_video_on_cmd491[] = {
-	0x04, 0x00, 0x39, 0xC0,
-	0xFF, 0x78, 0x07, 0x05,
-};
-
-static char tovis_ili7807b_fhd_video_on_cmd492[] = {
-	0x38, 0x03, 0x15, 0x80
-};
-
-static char tovis_ili7807b_fhd_video_on_cmd493[] = {
-	0x04, 0x00, 0x39, 0xC0,
-	0xFF, 0x78, 0x07, 0x00,
-};
-
-static char tovis_ili7807b_fhd_video_on_cmd494[] = {
 	0x11, 0xFF, 0x05, 0x80
 };
 
-static char tovis_ili7807b_fhd_video_on_cmd495[] = {
+static char tovis_ili7807b_fhd_video_on_cmd491[] = {
 	0x29, 0xFF, 0x05, 0x80
 };
 
@@ -2550,15 +2532,11 @@ static struct mipi_dsi_cmd tovis_ili7807b_fhd_video_on_command[] = {
 	{0x4, tovis_ili7807b_fhd_video_on_cmd487, 0x00},
 	{0x4, tovis_ili7807b_fhd_video_on_cmd488, 0x00},
 	{0x8, tovis_ili7807b_fhd_video_on_cmd489, 0x00},
-	{0x4, tovis_ili7807b_fhd_video_on_cmd490, 0x00},
-	{0x8, tovis_ili7807b_fhd_video_on_cmd491, 0x00},
-	{0x4, tovis_ili7807b_fhd_video_on_cmd492, 0x00},
-	{0x8, tovis_ili7807b_fhd_video_on_cmd493, 0x00},
-	{0x4, tovis_ili7807b_fhd_video_on_cmd494, 0x78},
-	{0x4, tovis_ili7807b_fhd_video_on_cmd495, 0x0A}
+	{0x4, tovis_ili7807b_fhd_video_on_cmd490, 0x78},
+	{0x4, tovis_ili7807b_fhd_video_on_cmd491, 0x0A}
 };
 
-#define TOVIS_ILI7807B_FHD_VIDEO_ON_COMMAND 496
+#define TOVIS_ILI7807B_FHD_VIDEO_ON_COMMAND 492
 
 
 static char tovis_ili7807b_fhd_videooff_cmd0[] = {

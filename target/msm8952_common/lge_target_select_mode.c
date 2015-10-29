@@ -632,11 +632,9 @@ int target_selectmode_init(void)
 		dprintf(INFO, "SM_LAF_DOWNLOAD start\n");
 		break;
 
-#ifndef LGE_WITH_DISABLE_FASTBOOT
 	case SM_FASTBOOT_DL:
 		dprintf(INFO, "SM_FASTBOOT_DL start\n");
 		break;
-#endif
 
 	case SM_DEBUG:
 #ifdef LGE_WITH_DISABLE_UART_BY_HWKEY

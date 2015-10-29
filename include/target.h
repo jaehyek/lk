@@ -90,4 +90,9 @@ bool target_build_variant_user();
 #ifdef LGE_WITH_FASTBOOT_MENU
 int target_is_production(void);
 #endif
+#if PLRTEST_ENABLE
+void *find_mmc_device(uint32_t dev_num);
+void turn_off_mmc();
+void turn_on_and_reinit_mmc();
+#endif
 #endif

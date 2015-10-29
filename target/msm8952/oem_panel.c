@@ -47,7 +47,6 @@
 #include "include/panel_truly_1080p_cmd.h"
 #include "include/panel_otm1906c_1080p_cmd.h"
 #include "include/panel_sharp_1080p_cmd.h"
-#include "include/panel_hx8399a_1080p_video.h"
 
 /*---------------------------------------------------------------------------*/
 /* static panel selection variable                                           */
@@ -57,7 +56,6 @@ enum {
 	TRULY_1080P_CMD_PANEL,
 	OTM1906C_1080P_CMD_PANEL,
 	SHARP_1080P_CMD_PANEL,
-	HX8399A_1080P_VIDEO_PANEL,
 	UNKNOWN_PANEL
 };
 
@@ -219,31 +217,6 @@ static int init_panel_data(struct panel_struct *panelstruct,
 		memcpy(phy_db->timing,
 				sharp_1080p_cmd_timings, TIMING_SIZE);
 		break;
-	case HX8399A_1080P_VIDEO_PANEL:
-		panelstruct->paneldata    = &hx8399a_1080p_video_panel_data;
-		panelstruct->panelres     = &hx8399a_1080p_video_panel_res;
-		panelstruct->color        = &hx8399a_1080p_video_color;
-		panelstruct->videopanel   = &hx8399a_1080p_video_video_panel;
-		panelstruct->commandpanel = &hx8399a_1080p_video_command_panel;
-		panelstruct->state        = &hx8399a_1080p_video_state;
-		panelstruct->laneconfig   = &hx8399a_1080p_video_lane_config;
-		panelstruct->paneltiminginfo
-				= &hx8399a_1080p_video_timing_info;
-		panelstruct->panelresetseq
-				= &hx8399a_1080p_video_reset_seq;
-		panelstruct->backlightinfo = &hx8399a_1080p_video_backlight;
-		pinfo->mipi.panel_on_cmds
-				= hx8399a_1080p_video_on_command;
-		pinfo->mipi.num_of_panel_on_cmds
-				= HX8399A_1080P_VIDEO_ON_COMMAND;
-		pinfo->mipi.panel_off_cmds
-				= hx8399a_1080p_video_off_command;
-		pinfo->mipi.num_of_panel_off_cmds
-				= HX8399A_1080P_VIDEO_OFF_COMMAND;
-		memcpy(phy_db->timing,
-				hx8399a_1080p_video_timings, TIMING_SIZE);
-		pinfo->mipi.signature = HX8399A_1080P_VIDEO_SIGNATURE;
-		break;
 	case UNKNOWN_PANEL:
 	default:
 		memset(panelstruct, 0, sizeof(struct panel_struct));
@@ -266,7 +239,6 @@ int oem_panel_select(const char *panel_name, struct panel_struct *panelstruct,
 {
 	uint32_t hw_id = board_hardware_id();
 	int32_t panel_override_id;
-	uint32_t target_id, plat_hw_ver_major;
 
 	if (panel_name) {
 		panel_override_id = panel_name_to_id(supp_panels,
@@ -293,13 +265,7 @@ int oem_panel_select(const char *panel_name, struct panel_struct *panelstruct,
 		panel_id = TRULY_1080P_VIDEO_PANEL;
 		break;
 	case HW_PLATFORM_QRD:
-		target_id = board_target_id();
-		plat_hw_ver_major = ((target_id >> 16) & 0xFF);
-
-		if(plat_hw_ver_major >= 4)
-			panel_id = HX8399A_1080P_VIDEO_PANEL;
-		else
-			panel_id = OTM1906C_1080P_CMD_PANEL;
+		panel_id = OTM1906C_1080P_CMD_PANEL;
 		break;
 	default:
 		dprintf(CRITICAL, "Display not enabled for %d HW type\n",

@@ -1,4 +1,4 @@
-/* Copyright (c) 2015, The Linux Foundation. All rights reserved.
+/* (c) 2015, The Linux Foundation. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions are
@@ -103,6 +103,10 @@
 #endif
 
 struct mmc_device *dev;
+#if PLRTEST_ENABLE
+struct mmc_device *dev_emmc;
+struct mmc_device *dev_sdcard;
+#endif
 
 static uint32_t mmc_pwrctl_base[] =
 	{ MSM_SDC1_BASE, MSM_SDC2_BASE };
@@ -119,6 +123,78 @@ void target_early_init(void)
 	uart_dm_init(2, 0, BLSP1_UART1_BASE);
 #endif
 }
+
+#if PLRTEST_ENABLE
+static void set_sdc_power_ctrl();
+
+/* GPIO NUMBER */
+#define GPIO_EMMC_IO_SW		26
+#define GPIO_EMMC_VCC_SW	27
+#define GPIO_EMMC_RESET_N	35
+#define GPIO_EMMC_IO_BUCK	63
+#define GPIO_EMMC_VCC_BUCK	64
+
+#define GPIO_EXT_INT_28_6	16
+#define GPIO_EXT_INT_28_7	17
+
+/* GPIO_DIRECTION */
+#define GPIO_STATE_LOW 0
+#define GPIO_STATE_HIGH 2
+static void config_mmc_power()
+{
+	gpio_tlmm_config(GPIO_EMMC_IO_BUCK, 0, GPIO_OUTPUT, GPIO_NO_PULL, GPIO_8MA, GPIO_DISABLE);
+	gpio_tlmm_config(GPIO_EMMC_VCC_BUCK, 0, GPIO_OUTPUT, GPIO_PULL_UP, GPIO_8MA, GPIO_DISABLE);
+	gpio_tlmm_config(GPIO_EMMC_IO_SW, 0, GPIO_OUTPUT, GPIO_NO_PULL, GPIO_2MA, GPIO_DISABLE);
+	gpio_tlmm_config(GPIO_EMMC_VCC_SW, 0, GPIO_OUTPUT, GPIO_NO_PULL, GPIO_2MA, GPIO_DISABLE);
+}
+
+static void turn_on_mmc()
+{
+	gpio_set_dir(GPIO_EMMC_VCC_BUCK, GPIO_STATE_HIGH);
+	gpio_set_dir(GPIO_EMMC_IO_BUCK, GPIO_STATE_HIGH);
+	thread_sleep(10);
+	gpio_set_dir(GPIO_EMMC_VCC_SW, GPIO_STATE_HIGH);
+	gpio_set_dir(GPIO_EMMC_IO_SW, GPIO_STATE_HIGH);
+	thread_sleep(10);
+}
+
+/*
+static void reset_mmc()
+{
+	gpio_tlmm_config(GPIO_EMMC_RESET_N, 0, GPIO_OUTPUT, GPIO_NO_PULL, GPIO_2MA, GPIO_DISABLE);
+	gpio_set_dir(GPIO_EMMC_RESET_N, GPIO_STATE_HIGH);
+	thread_sleep(10000);
+}
+*/
+
+void turn_on_and_reinit_mmc()
+{
+	turn_on_mmc();
+	mmc_card_reinit(dev_emmc);
+}
+
+void turn_off_mmc()
+{
+	gpio_set_dir(GPIO_EMMC_VCC_SW, GPIO_STATE_LOW);
+	gpio_set_dir(GPIO_EMMC_IO_SW, GPIO_STATE_LOW);
+	thread_sleep(10);
+	gpio_set_dir(GPIO_EMMC_VCC_BUCK, GPIO_STATE_LOW);
+	gpio_set_dir(GPIO_EMMC_IO_BUCK, GPIO_STATE_LOW);
+	thread_sleep(10);
+}
+
+static void set_gpk0()
+{
+	/* gpio config */
+	gpio_tlmm_config(GPIO_EXT_INT_28_6, 0, GPIO_OUTPUT, GPIO_NO_PULL, GPIO_6MA, GPIO_DISABLE);
+	gpio_set_dir(GPIO_EXT_INT_28_6, GPIO_STATE_HIGH);
+
+	gpio_tlmm_config(GPIO_EXT_INT_28_7, 0, GPIO_OUTPUT, GPIO_NO_PULL, GPIO_6MA, GPIO_DISABLE);
+	gpio_set_dir(GPIO_EXT_INT_28_7, GPIO_STATE_LOW);
+
+	thread_sleep(10);
+}
+#endif
 
 static void set_sdc_power_ctrl()
 {
@@ -153,6 +229,12 @@ void target_sdc_init()
 {
 	struct mmc_config_data config;
 
+#if PLRTEST_ENABLE
+	config_mmc_power();
+	turn_on_mmc();
+	set_gpk0();
+#endif
+
 	/* Set drive strength & pull ctrl values */
 	set_sdc_power_ctrl();
 
@@ -165,6 +247,28 @@ void target_sdc_init()
 	config.pwr_irq       = mmc_sdc_pwrctl_irq[config.slot - 1];
 	config.hs400_support = 1;
 
+#if PLRTEST_ENABLE
+	if (!(dev_emmc = mmc_init(&config)))
+	{
+		dprintf(CRITICAL, "eMMC init failed!");
+		ASSERT(0);
+	}
+
+	/* Try slot 2 */
+	config.slot          = 2;
+	config.max_clk_rate  = MMC_CLK_200MHZ;
+	config.sdhc_base     = mmc_sdhci_base[config.slot - 1];
+	config.pwrctl_base   = mmc_pwrctl_base[config.slot - 1];
+	config.pwr_irq       = mmc_sdc_pwrctl_irq[config.slot - 1];
+	config.hs400_support = 0;
+
+	if (!(dev_sdcard = mmc_init(&config))) {
+		dprintf(CRITICAL, "sdcard init failed!\n");
+		ASSERT(0);
+	}
+
+	dev = dev_sdcard;
+#else
 	if (!(dev = mmc_init(&config))) {
 	/* Try slot 2 */
 		config.slot          = 2;
@@ -179,7 +283,26 @@ void target_sdc_init()
 			ASSERT(0);
 		}
 	}
+#endif
 }
+
+#if PLRTEST_ENABLE
+/* plrtest_target_mmc_device() is called from mmc operation code like as read/write.
+ * dev_num = 0 : SD Card
+ * dev_num = 1 : eMMC
+ */
+#define SDCARD_DEV_NUM	0
+#define EMMC_DEV_NUM	1
+
+void *find_mmc_device(uint32_t dev_num)
+{
+	if (dev_num == SDCARD_DEV_NUM)
+		return (void *) dev_sdcard;
+	else if (dev_num == EMMC_DEV_NUM)
+		return (void *) dev_emmc;
+	return (void *) NULL;
+}
+#endif
 
 void *target_mmc_device()
 {
@@ -270,14 +393,15 @@ void target_init(void)
 	target_keystatus();
 
 	target_sdc_init();
-	if (partition_read_table())
+
+/*	if (partition_read_table())
 	{
 		dprintf(CRITICAL, "Error reading the partition table info\n");
 		ASSERT(0);
 	}
-
+*/
 #ifdef LGE_WITH_COMMON
-	target_common_init();
+//	target_common_init();
 #endif
 
 #if LONG_PRESS_POWER_ON
@@ -463,15 +587,13 @@ unsigned target_pause_for_battery_charge(void)
 	uint8_t poff_reason1 = pm8x41_get_pon_poff_reason1();
 	uint8_t poff_reason2 = pm8x41_get_pon_poff_reason2();
 	uint8_t is_cold_boot = pm8x41_get_is_cold_boot();
-	bool usb_present_sts = !(USBIN_UV_RT_STS &
-				pm8x41_reg_read(SMBCHG_USB_RT_STS));
 
 	dprintf(INFO, "%s : pon_reason is %d cold_boot:%d\n", __func__,
 		pon_reason, is_cold_boot);
+
 	dprintf(INFO, "PON_PON_REASON1:0x%x\n", pon_reason);
 	dprintf(INFO, "PON_POFF_REASON1:0x%x\n", poff_reason1);
 	dprintf(INFO, "PON_POFF_REASON2:0x%x\n", poff_reason2);
-	dprintf(INFO, "SMBCHG_USB_CHGPTH_INT_RT_STS:0x%x\n", usb_present_sts);
 
 	#define USBIN_SRC_DET_STS_RT_STS 0x4
 	#define WARM_RST_REASON2_AFP     0x8
@@ -483,11 +605,9 @@ unsigned target_pause_for_battery_charge(void)
 	 */
 	if ((!(pon_reason & PWR_ON_EVENT_KPDPWR_N)) &&
 		(!(pon_reason & PWR_ON_EVENT_HARD_RESET))) {
-		if((!!(pon_reason & PWR_ON_EVENT_PON1) &&
-			usb_present_sts) ||
-			(!!(poff_reason2 & PWR_OFF2_EVENT_UVLO) &&
-			!!(pon_reason & (PWR_ON_EVENT_PON1|PWR_ON_EVENT_SMPL)) &&
-			usb_present_sts)) {
+		if (!!(pon_reason & PWR_ON_EVENT_PON1) ||
+			  (!!(poff_reason2 & PWR_OFF2_EVENT_UVLO) &&
+			  !!(pon_reason & (PWR_ON_EVENT_PON1|PWR_ON_EVENT_SMPL)))) {
 			if (boot_into_chargerlogo == 1 &&
 					bootmode_check_pif_detect() != 1 &&
 					get_qem() != 1 &&
@@ -520,7 +640,12 @@ unsigned target_pause_for_battery_charge(void)
 
 void target_uninit(void)
 {
-
+#if PLRTEST_ENABLE
+	mmc_put_card_to_sleep(dev_emmc);
+	mmc_put_card_to_sleep(dev_sdcard);
+	sdhci_mode_disable(&dev_emmc->host);
+	sdhci_mode_disable(&dev_sdcard->host);
+#endif
 	mmc_put_card_to_sleep(dev);
 	sdhci_mode_disable(&dev->host);
 	if (crypto_initialized())

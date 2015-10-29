@@ -250,6 +250,8 @@ enum {
 #define SDHCI_BLK_ADMA_MASK                       0x00080000
 #define SDHCI_INT_STS_TRANS_COMPLETE              BIT(1)
 #define SDHCI_STATE_CMD_DAT_MASK                  0x0003
+#define SDHCI_STATE_LEVEL_DAT0_MASK               BIT(20)
+#define SDHCI_STATE_WR_TRANS_ACT_MASK             BIT(8)
 #define SDHCI_INT_STS_CMD_COMPLETE                BIT(0)
 #define SDHCI_ERR_INT_STAT_MASK                   0x8000
 #define SDHCI_ADMA_DESC_LINE_SZ                   65536

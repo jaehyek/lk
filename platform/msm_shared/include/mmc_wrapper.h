@@ -53,4 +53,21 @@ void mmc_set_lun(uint8_t lun);
 uint8_t mmc_get_lun(void);
 void  mmc_read_partition_table(uint8_t arg);
 uint32_t mmc_write_protect(const char *name, int set_clr);
+
+#if PLRTEST_ENABLE
+uint32_t plr_mmc_write(int32_t dev_num, uint32_t start_sector, uint32_t len_sector, uint8_t *in);
+uint32_t plr_mmc_read(int32_t dev_num, uint32_t start_sector, uint8_t *out, uint32_t len_sector);
+uint32_t plr_mmc_erase_card(int32_t dev_num, uint32_t start_sector, uint32_t len_sector);
+uint32_t plr_packed_add_list(int32_t dev_num, uint32_t start, lbaint_t blkcnt, void *buff, uint8_t rw);
+uint32_t plr_packed_send_list(int32_t dev_num);
+void* plr_packed_create_buf(int32_t dev_num, void *buff);
+uint32_t plr_packed_delete_buf(int32_t dev_num);
+struct mmc_packed* plr_get_packed_info(int32_t dev_num);
+uint32_t plr_get_packed_count(int32_t dev_num);
+uint32_t plr_get_packed_max_sectors(int32_t dev_num, uint8_t rw);
+int32_t plr_cache_flush(int32_t dev_num);
+int32_t plr_cache_ctrl(int32_t dev_num, uint8_t enable);
+int32_t emmc_set_internal_info(int32_t dev_num, void* internal_info);
+int32_t emmc_erase_for_poff(int32_t dev_num, uint32_t start_sector, uint32_t len, int type);
+#endif
 #endif

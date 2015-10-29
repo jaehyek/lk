@@ -344,8 +344,8 @@ void bootmode_set_androidboot_mode(void)
 			bootcmd_add_pair("boot_cpus", "0-3");
 		}
 		if (bootmode_get_batt_id() == 0) {
-			bootcmd_add_pair("maxcpus", "2");
-			bootcmd_add_pair("boot_cpus", "4");
+			bootcmd_add_pair("maxcpus", "3");
+			bootcmd_add_pair("boot_cpus", "0-1");
 		}
 	} else {
 		/* normal booting */

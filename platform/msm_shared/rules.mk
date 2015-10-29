@@ -16,7 +16,10 @@ OBJS += \
 	$(LOCAL_DIR)/hsusb.o \
 	$(LOCAL_DIR)/boot_stats.o \
 	$(LOCAL_DIR)/qgic_common.o \
-	$(LOCAL_DIR)/crc32.o
+	$(LOCAL_DIR)/crc32.o \
+	$(LOCAL_DIR)/plrtest/plr_emmc_calibration.o \
+	$(LOCAL_DIR)/plrtest/plr_emmc_internal.o \
+	$(LOCAL_DIR)/plrtest/plr_emmc_poff.o \
 
 ifeq ($(ENABLE_WDOG_SUPPORT),1)
 OBJS += \

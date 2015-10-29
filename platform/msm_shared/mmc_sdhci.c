@@ -37,6 +37,14 @@
 #include <platform/iomap.h>
 #include <platform/timer.h>
 #include <platform.h>
+#if PLRTEST_ENABLE
+#include "plr_common.h"
+#include <platform/interrupts.h>
+
+#define CONFIG_SYS_MMC_MAX_BLK_COUNT 0x4000    // 16K 8MB
+static uint32_t plr_mmc_config_init(struct mmc_device *dev);
+extern struct plr_state g_plr_state;
+#endif
 
 extern void clock_init_mmc(uint32_t);
 extern void clock_config_mmc(uint32_t, uint32_t);
@@ -234,14 +242,16 @@ static uint32_t mmc_decode_and_save_csd(struct mmc_card *card)
 			sizeof(struct mmc_csd));
 
 	/* Calculate the wp grp size */
-	if (card->ext_csd[MMC_ERASE_GRP_DEF])
+	if (MMC_CARD_MMC(card) && card->ext_csd[MMC_ERASE_GRP_DEF])
 		card->wp_grp_size = MMC_HC_ERASE_MULT * card->ext_csd[MMC_HC_ERASE_GRP_SIZE] / MMC_BLK_SZ;
 	else
 		card->wp_grp_size = (card->csd.wp_grp_size + 1) * (card->csd.erase_grp_size + 1) \
 					  * (card->csd.erase_grp_mult + 1);
 
-	card->rpmb_size = RPMB_PART_MIN_SIZE * card->ext_csd[RPMB_SIZE_MULT];
-	card->rel_wr_count = card->ext_csd[REL_WR_SEC_C];
+	if (MMC_CARD_MMC(card)) {
+		card->rpmb_size = RPMB_PART_MIN_SIZE * card->ext_csd[RPMB_SIZE_MULT];
+		card->rel_wr_count = card->ext_csd[REL_WR_SEC_C];
+	}
 
 	dprintf(SPEW, "Decoded CSD fields:\n");
 	dprintf(SPEW, "cmmc_structure: %u\n", mmc_csd.cmmc_structure);
@@ -709,7 +719,10 @@ static uint32_t mmc_get_ext_csd(struct sdhci_host *host, struct mmc_card *card)
  * Return  : 0 on Success, 1 on Failure
  * Flow    : Send switch command to the card to set the ext attribute @ index
  */
-static uint32_t mmc_switch_cmd(struct sdhci_host *host, struct mmc_card *card,
+#if !PLRTEST_ENABLE
+static
+#endif
+uint32_t mmc_switch_cmd(struct sdhci_host *host, struct mmc_card *card,
 							   uint32_t access, uint32_t index, uint32_t value)
 {
 
@@ -736,7 +749,9 @@ static uint32_t mmc_switch_cmd(struct sdhci_host *host, struct mmc_card *card,
 
 	mmc_ret = sdhci_send_command(host, &cmd);
 	if (mmc_ret) {
-		dprintf(CRITICAL, "CMD6 send failed\n");
+		if(mmc_ret != -INTERNAL_POWEROFF_FLAG) {
+			dprintf(CRITICAL, "CMD6 send failed\n");
+		}
 		return mmc_ret;
 	}
 
@@ -1476,7 +1491,6 @@ uint32_t mmc_sd_set_hs(struct sdhci_host *host, struct mmc_card *card)
  * Flow    : Performs initialization and identification of eMMC cards connected
  *           to the host.
  */
-
 static uint32_t mmc_card_init(struct mmc_device *dev)
 {
 	uint32_t mmc_return = 0;
@@ -1537,8 +1551,8 @@ static uint32_t mmc_card_init(struct mmc_device *dev)
 	/* Now get the extended CSD for the card */
 	if (MMC_CARD_MMC(card))
 	{
-			/* For MMC cards, also get the extended csd */
-			mmc_return = mmc_get_ext_csd(host, card);
+		/* For MMC cards, also get the extended csd */
+		mmc_return = mmc_get_ext_csd(host, card);
 
 			if (mmc_return) {
 				dprintf(CRITICAL, "Failure getting card's ExtCSD information!\n");
@@ -1677,7 +1691,7 @@ static uint32_t mmc_card_init(struct mmc_device *dev)
 	card->block_size = MMC_BLK_SZ;
 
 	/* Enable RST_n_FUNCTION */
-	if (!card->ext_csd[MMC_EXT_CSD_RST_N_FUNC])
+	if (MMC_CARD_MMC(card) && !card->ext_csd[MMC_EXT_CSD_RST_N_FUNC])
 	{
 		mmc_return = mmc_switch_cmd(host, card, MMC_SET_BIT, MMC_EXT_CSD_RST_N_FUNC, RST_N_FUNC_ENABLE);
 
@@ -1687,6 +1701,13 @@ static uint32_t mmc_card_init(struct mmc_device *dev)
 			return mmc_return;
 		}
 	}
+
+#if PLRTEST_ENABLE
+	card->mmc_max_blk_cnt = CONFIG_SYS_MMC_MAX_BLK_COUNT;
+	if (MMC_CARD_MMC(card)) {
+		list_initialize(&card->packed_info.packed_list);
+	}
+#endif
 
 	return mmc_return;
 }
@@ -1706,6 +1727,45 @@ static void mmc_display_csd(struct mmc_card *card)
 	dprintf(SPEW, "perm_wp: %d\n", card->csd.perm_wp);
 	dprintf(SPEW, "temp_wp: %d\n", card->csd.temp_wp);
 }
+
+#if PLRTEST_ENABLE
+uint32_t mmc_card_reinit(struct mmc_device *dev)
+{
+	uint8_t mmc_ret = 0;
+	struct sdhci_host *host = &dev->host;
+
+	/* reinit SDCC_VENDOR_SPECIFIC_FUNC register */
+	REG_WRITE32(host, 0xA1C, SDCC_VENDOR_SPECIFIC_FUNC);
+
+	/* Initialize the host & clock */
+	dprintf(SPEW, " Initializing MMC host data structure and clock!\n");
+
+	mmc_ret = mmc_host_init(dev);
+	if (mmc_ret) {
+		dprintf(CRITICAL, "Error Initializing MMC host : %u\n", mmc_ret);
+		return 1;
+	}
+
+	/* Initialize and identify cards connected to host */
+	mmc_ret = mmc_card_init(dev);
+	if (mmc_ret) {
+		dprintf(CRITICAL, "Failed detecting MMC/SDC @ slot%d\n",
+						  dev->config.slot);
+		return 1;
+	}
+
+	mmc_ret = plr_mmc_config_init(dev);
+	if (mmc_ret) {
+		dprintf(CRITICAL, "Failed init config for plr test!!\n");
+	}
+
+	dprintf(INFO, "Done initialization of the card\n");
+
+	mmc_display_csd(&dev->card);
+
+	return 0;
+}
+#endif
 
 /*
  * Function: mmc_init
@@ -1750,6 +1810,13 @@ struct mmc_device *mmc_init(struct mmc_config_data *data)
 						  dev->config.slot);
 		return NULL;
 	}
+
+#if PLRTEST_ENABLE
+ 	mmc_ret = plr_mmc_config_init(dev);
+	if (mmc_ret) {
+		dprintf(CRITICAL, "Failed init config for plr test!!\n");
+	}
+#endif
 
 	dprintf(INFO, "Done initialization of the card\n");
 
@@ -1841,9 +1908,15 @@ uint32_t mmc_sdhci_read(struct mmc_device *dev, void *dest,
 {
 	uint32_t mmc_ret = 0;
 	struct mmc_command cmd;
+#if PLRTEST_ENABLE
+	struct mmc_command sbc;
+#endif
 	struct mmc_card *card = &dev->card;
 
 	memset((struct mmc_command *)&cmd, 0, sizeof(struct mmc_command));
+#if PLRTEST_ENABLE
+	memset((struct mmc_command *)&sbc, 0, sizeof(struct mmc_command));
+#endif
 
 	/* CMD17/18 Format:
 	 * [31:0] Data Address
@@ -1883,6 +1956,23 @@ uint32_t mmc_sdhci_read(struct mmc_device *dev, void *dest,
 	cmd.data.data_ptr = dest;
 	cmd.data.num_blocks = num_blocks;
 
+#if PLRTEST_ENABLE
+	/* Generate CMD23 in num_blocks
+	 */
+	if(cmd.cmd23_support && num_blocks > 1)
+	{
+		sbc.cmd_index = CMD23_SET_BLOCK_COUNT;
+		sbc.argument = num_blocks;
+		sbc.resp_type = SDHCI_CMD_RESP_R1;
+		sbc.cmd_type = SDHCI_CMD_TYPE_NORMAL;
+		mmc_ret = sdhci_send_command(&dev->host, &sbc);
+		if(mmc_ret) {
+			dprintf(CRITICAL, "CMD23 for %s is failed!\n", __func__);
+			return -1;
+		}
+	}
+#endif
+
 	/* send command */
 	mmc_ret = sdhci_send_command(&dev->host, &cmd);
 
@@ -1910,9 +2000,15 @@ uint32_t mmc_sdhci_write(struct mmc_device *dev, void *src,
 {
 	uint32_t mmc_ret = 0;
 	struct mmc_command cmd;
+#if PLRTEST_ENABLE
+	struct mmc_command sbc;
+#endif
 	struct mmc_card *card = &dev->card;
 
 	memset((struct mmc_command *)&cmd, 0, sizeof(struct mmc_command));
+#if PLRTEST_ENABLE
+	memset((struct mmc_command *)&sbc, 0, sizeof(struct mmc_command));
+#endif
 
 	/* CMD24/25 Format:
 	 * [31:0] Data Address
@@ -1952,11 +2048,30 @@ uint32_t mmc_sdhci_write(struct mmc_device *dev, void *src,
 	cmd.data.data_ptr = src;
 	cmd.data.num_blocks = num_blocks;
 
+#if PLRTEST_ENABLE
+	/* Generate CMD23 in num_blocks
+	 */
+	if(cmd.cmd23_support && num_blocks > 1)
+	{
+		sbc.cmd_index = CMD23_SET_BLOCK_COUNT;
+		sbc.argument = num_blocks;
+		sbc.resp_type = SDHCI_CMD_RESP_R1;
+		sbc.cmd_type = SDHCI_CMD_TYPE_NORMAL;
+		mmc_ret = sdhci_send_command(&dev->host, &sbc);
+		if(mmc_ret) {
+			dprintf(CRITICAL, "CMD23 for %s is failed!\n", __func__);
+			return -1;
+		}
+	}
+#endif
+
 	/* send command */
 	mmc_ret = sdhci_send_command(&dev->host, &cmd);
 
 	/* For multi block write failures send stop command */
-	if (mmc_ret && num_blocks > 1)
+	if (mmc_ret == -INTERNAL_POWEROFF_FLAG) {
+		return mmc_ret;
+	} else if (mmc_ret && num_blocks > 1)
 	{
 		return mmc_stop_command(dev);
 	}
@@ -2057,7 +2172,11 @@ static uint32_t mmc_send_erase_grp_end(struct mmc_device *dev, uint32_t erase_en
 /*
  * Send the erase CMD38, to erase the selected erase groups
  */
+#if PLRTEST_ENABLE
+static uint32_t mmc_send_erase(struct mmc_device *dev, uint64_t erase_timeout, uint32_t sec)
+#else
 static uint32_t mmc_send_erase(struct mmc_device *dev, uint64_t erase_timeout)
+#endif
 {
 	struct mmc_command cmd;
 	uint32_t status;
@@ -2066,7 +2185,11 @@ static uint32_t mmc_send_erase(struct mmc_device *dev, uint64_t erase_timeout)
 	memset((struct mmc_command *)&cmd, 0, sizeof(struct mmc_command));
 
 	cmd.cmd_index = CMD38_ERASE;
+#if PLRTEST_ENABLE
+	cmd.argument = (sec)?0x80000000:0x00000000;
+#else
 	cmd.argument = 0x00000000;
+#endif
 	cmd.cmd_type = SDHCI_CMD_TYPE_NORMAL;
 	cmd.resp_type = SDHCI_CMD_RESP_R1B;
 	cmd.cmd_timeout = erase_timeout;
@@ -2106,7 +2229,11 @@ static uint32_t mmc_send_erase(struct mmc_device *dev, uint64_t erase_timeout)
  * Return  : 0 on Success, non zero on failure
  * Flow    : Fill in the command structure & send the command
  */
+#if PLRTEST_ENABLE
+uint32_t mmc_sdhci_erase(struct mmc_device *dev, uint32_t blk_addr, uint64_t len, uint32_t sec)
+#else
 uint32_t mmc_sdhci_erase(struct mmc_device *dev, uint32_t blk_addr, uint64_t len)
+#endif
 {
 	uint32_t erase_unit_sz = 0;
 	uint32_t erase_start;
@@ -2186,7 +2313,11 @@ uint32_t mmc_sdhci_erase(struct mmc_device *dev, uint32_t blk_addr, uint64_t len
 	erase_timeout = (300 * 1000 * card->ext_csd[MMC_ERASE_TIMEOUT_MULT] * num_erase_grps);
 
 	/* Send CMD38 to perform erase */
+#if PLRTEST_ENABLE
+	if (mmc_send_erase(dev, erase_timeout, sec))
+#else
 	if (mmc_send_erase(dev, erase_timeout))
+#endif
 	{
 		dprintf(CRITICAL, "Failed to erase the specified partition\n");
 		return 1;
@@ -2478,3 +2609,363 @@ err:
 
 	return ret;
 }
+
+#if PLRTEST_ENABLE
+static uint32_t plr_mmc_config_init(struct mmc_device *dev)
+{
+	uint32_t mmc_ret = 0;
+	struct sdhci_host *host;
+	struct mmc_card *card;
+	struct mmc_config_data *cfg;
+
+	host = &dev->host;
+	card = &dev->card;
+	cfg = &dev->config;
+
+	/* slot = 0 -> SD Card
+	 * slot = 1 -> eMMC
+	 */
+	if(cfg->slot != 1)
+		return 0;
+
+	if(card->ext_csd[MMC_EXT_REV] >=6) {
+		cfg->cache_size = card->ext_csd[MMC_EXT_CACHE_SIZE + 0] << 0 |
+						card->ext_csd[MMC_EXT_CACHE_SIZE + 1] << 8 |
+						card->ext_csd[MMC_EXT_CACHE_SIZE + 2] << 16 |
+						card->ext_csd[MMC_EXT_CACHE_SIZE + 3] << 24;
+
+		cfg->max_packed_writes = card->ext_csd[MMC_EXT_MAX_PACKED_WRITES];
+		cfg->max_packed_reads = card->ext_csd[MMC_EXT_MAX_PACKED_READS];
+	}
+
+	/* Cache Control */
+	if(cfg->cache_size > 0) {
+		mmc_ret = mmc_switch_cmd(host, card, MMC_ACCESS_WRITE, MMC_EXT_CACHE_CTRL, 1);
+		if (mmc_ret)
+			return -1;
+		cfg->cache_ctrl = 1;
+		dprintf(CRITICAL, "Enabled Cache Control!! Cache Size = %u KB\n", cfg->cache_size);
+	}
+
+	/* Packed Commands */
+	if((cfg->max_packed_writes > 0) && (cfg->max_packed_reads > 0)) {
+		mmc_ret = mmc_switch_cmd(host, card, MMC_ACCESS_WRITE, MMC_EXT_EXP_EVENTS_CTRL, EXT_CSD_PACKED_EVENT_EN);
+		if(mmc_ret) {
+			dprintf(CRITICAL, "Fail to enable packed event!!\n");
+			cfg->packed_event_en = 0;
+		} else {
+			dprintf(CRITICAL, "Success to enable packed event!!\n");
+			dprintf(CRITICAL, "Max Read packed #(min 5) = %u, Max Write packed #(min 3) = %u\n",
+					cfg->max_packed_reads, cfg->max_packed_writes);
+			cfg->packed_event_en = 1;
+		}
+	}
+	return 0;
+}
+
+uint32_t plr_mmc_sdhci_read_packed(struct mmc_device *dev, void *dest)
+{
+	int timeout = 1000000;
+	uint32_t i = 0;
+	uint32_t mmc_status;
+	struct mmc_command cmd = {0,};
+	struct mmc_command sbc = {0,};
+	struct mmc_data *data = &cmd.data;
+	struct mmc_packed *packed_info = &dev->card.packed_info;
+	uint8_t* ext_csd = dev->card.ext_csd;
+
+	cmd.cmd_index = CMD25_WRITE_MULTIPLE_BLOCK;
+	cmd.argument = packed_info->packed_start_sector;
+	cmd.resp_type = SDHCI_CMD_RESP_R1;
+	cmd.data_present = 1;
+
+	data->data_ptr = (char*)packed_info->packed_cmd_hdr;
+	data->num_blocks = 1;
+	data->blk_sz = MMC_BLK_SZ;
+
+	sbc.cmd_index = CMD23_SET_BLOCK_COUNT;
+	sbc.argument = MMC_CMD23_ARG_PACKED | 1;
+	sbc.resp_type = SDHCI_CMD_RESP_R1;
+
+	if (sdhci_send_command(&dev->host, &sbc)) {
+		printf("[%s] CMD23 failed\n", __func__);
+		return 0;
+	}
+
+	if (sdhci_send_command(&dev->host, &cmd)) {
+		printf("[%s] mmc write failed\n", __func__);
+		return 0;
+	}
+
+	/* Waiting for the ready status */
+	do {
+		if(mmc_get_card_status(&dev->host, &dev->card, &mmc_status)) {
+			return 1;
+		}
+		if((mmc_status & MMC_READY_FOR_DATA) &&
+				(MMC_CARD_STATUS(mmc_status) != MMC_PROG_STATE)) {
+			break;
+		}
+		udelay(10);
+	} while(--timeout);
+
+	if(timeout < 0)
+		return 0;
+
+	cmd.cmd_index = CMD18_READ_MULTIPLE_BLOCK;
+	cmd.argument = packed_info->packed_start_sector;
+	cmd.resp_type = SDHCI_CMD_RESP_R1;
+	cmd.trans_mode = SDHCI_MMC_READ;
+	cmd.data_present = 1;
+	cmd.cmd23_support = 1;
+
+	data->data_ptr = dest;
+	data->num_blocks = packed_info->packed_blocks;
+	data->blk_sz = dev->card.csd.read_blk_len;
+
+	sbc.cmd_index = CMD23_SET_BLOCK_COUNT;
+	sbc.argument = MMC_CMD23_ARG_PACKED | packed_info->packed_blocks;
+	sbc.resp_type = SDHCI_CMD_RESP_R1;
+
+	if (sdhci_send_command(&dev->host, &sbc)) {
+		printf ("[%s] mmc sbc failed\n", __func__);
+		return 0;
+	}
+
+	if (sdhci_send_command(&dev->host, &cmd)) {
+		printf("[%s] mmc read failed\n", __func__);
+		return 0;
+	}
+	if (cmd.resp[0] & DEV_STATUS_EXCEPTION_EVENT) {
+		/* refresh ext_csd */
+		mmc_get_ext_csd(&dev->host, &dev->card);
+		if ((ext_csd[MMC_EXT_EXP_EVENTS_STATUS] & EXT_CSD_PACKED_FAILURE) &&
+				(ext_csd[MMC_EXT_PACKED_CMD_STATUS] & EXT_CSD_PACKED_GENERIC_ERROR)) {
+			printf ("[%s] packed EXT_CSD_PACKED_GENERIC_ERROR!!\n", __func__);
+			if (ext_csd[MMC_EXT_PACKED_CMD_STATUS] & EXT_CSD_PACKED_INDEXED_ERROR) {
+				packed_info->packed_fail_idx = ext_csd[MMC_EXT_PACKED_FAILURE_INDEX] - 1;
+				printf ("[%s] packed EXT_CSD_PACKED_INDEXED_ERROR!! index : %u\n", __func__, packed_info->packed_fail_idx);
+			}
+		}
+	} else {
+		for(i = 0; i < packed_info->packed_blocks; ++i) {
+			printf("data[%d] = 0x%lx\n", i, *((uint32_t *)(dest+i*data->blk_sz)));
+		}
+	}
+
+	return packed_info->packed_blocks;
+}
+
+uint32_t plr_mmc_sdhci_write_packed(struct mmc_device *dev, const void* src)
+{
+	int ret = 0;
+	int timeout = 1000000;
+	uint32_t mmc_status;
+	struct mmc_command cmd = {0,};
+	struct mmc_command sbc = {0,};
+	struct mmc_data *data = &cmd.data;
+	struct mmc_packed *packed_info = &dev->card.packed_info;
+	uint8_t* ext_csd = dev->card.ext_csd;
+
+	cmd.cmd_index = CMD25_WRITE_MULTIPLE_BLOCK;
+	cmd.argument = packed_info->packed_start_sector;
+	cmd.resp_type = SDHCI_CMD_RESP_R1;
+	cmd.data_present = 0x1;
+	cmd.cmd23_support = 1;
+
+	data->data_ptr = (void*)src;
+	data->num_blocks = packed_info->packed_blocks + 1;
+	data->blk_sz = dev->card.csd.write_blk_len;
+
+	sbc.cmd_index = CMD23_SET_BLOCK_COUNT;
+	sbc.argument = MMC_CMD23_ARG_PACKED | (packed_info->packed_blocks + 1);
+	sbc.resp_type = SDHCI_CMD_RESP_R1;
+
+	if (sdhci_send_command(&dev->host, &sbc)) {
+		printf ("[%s] mmc sbc failed\n", __func__);
+		return 0;
+	}
+
+	ret = sdhci_send_command(&dev->host, &cmd);
+	if (ret) {
+		if(ret == -INTERNAL_POWEROFF_FLAG) {
+			return ret;
+		} else if (ret != 1)
+			printf("mmc write failed\n");
+		return 0;
+	}
+
+	/* Waiting for the ready status */
+	do {
+		if(mmc_get_card_status(&dev->host, &dev->card, &mmc_status)) {
+			return 1;
+		}
+		if((mmc_status & MMC_READY_FOR_DATA) &&
+				(MMC_CARD_STATUS(mmc_status) != MMC_PROG_STATE)) {
+			break;
+		}
+		udelay(10);
+	} while(--timeout);
+
+	if(!timeout)
+		return 0;
+
+	if (cmd.resp[0] & DEV_STATUS_EXCEPTION_EVENT || mmc_status & DEV_STATUS_EXCEPTION_EVENT) {
+		/* refresh ext_csd */
+		free(ext_csd);
+		mmc_get_ext_csd(&dev->host, &dev->card);
+		ext_csd = dev->card.ext_csd;
+		if ((ext_csd[MMC_EXT_EXP_EVENTS_STATUS] & EXT_CSD_PACKED_FAILURE) &&
+				(ext_csd[MMC_EXT_PACKED_CMD_STATUS] & EXT_CSD_PACKED_GENERIC_ERROR)) {
+			printf ("[%s] packed EXT_CSD_PACKED_GENERIC_ERROR!!\n", __func__);
+			if (ext_csd[MMC_EXT_PACKED_CMD_STATUS] & EXT_CSD_PACKED_INDEXED_ERROR) {
+				packed_info->packed_fail_idx = ext_csd[MMC_EXT_PACKED_FAILURE_INDEX] - 1;
+				printf ("[%s] packed EXT_CSD_PACKED_INDEXED_ERROR!! index : %u\n", __func__, packed_info->packed_fail_idx);
+			}
+		}
+	}
+	return packed_info->packed_blocks;
+}
+
+static uint32_t plr_mmc_send_erase(struct mmc_device *dev, uint64_t erase_timeout, int type)
+{
+	struct mmc_command cmd;
+	uint32_t status;
+	uint32_t retry = 0;
+	uint32_t ret = 0;
+
+	memset((struct mmc_command *)&cmd, 0, sizeof(struct mmc_command));
+
+	cmd.cmd_index = CMD38_ERASE;
+	cmd.cmd_type = SDHCI_CMD_TYPE_NORMAL;
+	cmd.resp_type = SDHCI_CMD_RESP_R1B;
+	cmd.cmd_timeout = erase_timeout;
+	if (type == TYPE_ERASE || type == TYPE_SANITIZE)
+	{
+		cmd.argument = NORMAL_ERASE;
+	}
+	else if (type == TYPE_TRIM) {
+		cmd.argument = TRIM;
+	}
+	else if (type == TYPE_DISCARD) {
+		cmd.argument = DISCARD;
+	}
+
+	/* send command */
+	ret = sdhci_send_command(&dev->host, &cmd);
+	if (ret)
+		return ret;
+
+	do
+	{
+		if (mmc_get_card_status(&dev->host, &dev->card, &status))
+		{
+			dprintf(CRITICAL, "Failed to get card status after erase\n");
+			return 1;
+		}
+		/* Check if the response of erase command has eras skip status set */
+		if (status & MMC_R1_WP_ERASE_SKIP)
+			dprintf(CRITICAL, "Write Protect set for the region, only partial space was erased\n");
+
+		retry++;
+		udelay(10);
+		if (retry == MMC_MAX_CARD_STAT_RETRY)
+		{
+			dprintf(CRITICAL, "Card status check timed out after sending erase command\n");
+			return 1;
+		}
+	} while(!(status & MMC_READY_FOR_DATA) || (MMC_CARD_STATUS(status) == MMC_PROG_STATE));
+
+	return 0;
+}
+
+int32_t plr_emmc_erase_for_poff(struct mmc_device *dev, uint32_t start_sector, uint32_t len, int type)
+{
+	uint64_t erase_timeout = 0;
+	struct mmc_card *card;
+	uint32_t ret = 0;
+	uint32_t retry = 0;
+	uint32_t status;
+	uint32_t erase_unit_sz = 0;
+
+	card = &dev->card;
+
+	if(MMC_CARD_SD(card)) {
+		return -1;
+	}
+
+	if(type == TYPE_ERASE || type == TYPE_SANITIZE) {
+		erase_unit_sz = (card->csd.erase_grp_size+1)*(card->csd.erase_grp_mult+1);
+		if ((start_sector % erase_unit_sz) || (len % erase_unit_sz)) {
+			printf("Not matched erase group! Your devices Erase group is 0x%x\n",
+					erase_unit_sz);
+			return -1;
+		}
+	}
+
+	if(type == TYPE_SANITIZE) {
+		if (!(card->ext_csd[MMC_EXT_REV]>=6 &&
+					card->ext_csd[MMC_EXT_SEC_FEATURE_SUPPORT] & EXT_CSD_SEC_SANITIZE)) {
+			printf ("Not supported sanitize\n");
+			return -1;
+		}
+	}
+
+	/* Send CMD35 for erase group start */
+	if (mmc_send_erase_grp_start(dev, start_sector))
+	{
+		dprintf(CRITICAL, "Failed to send erase grp start address\n");
+		return 1;
+	}
+
+	/* Send CMD36 for erase group end */
+	if (mmc_send_erase_grp_end(dev, start_sector + len - 1))
+	{
+		dprintf(CRITICAL, "Failed to send erase grp end address\n");
+		return 1;
+	}
+
+	erase_timeout = (300 * 1000 * card->ext_csd[MMC_ERASE_TIMEOUT_MULT] * len);
+
+	/* Send CMD38 to perform erase */
+	ret = plr_mmc_send_erase(dev, erase_timeout, type);
+	if (ret) {
+		if ( ret != -(INTERNAL_POWEROFF_FLAG))
+			printf("Erase error. erase type : %d\n", type);
+		else
+			g_plr_state.poweroff_pos = start_sector;
+		return ret;
+	}
+
+	if (type == TYPE_SANITIZE) {
+		ret = mmc_switch_cmd(&dev->host, card, MMC_ACCESS_WRITE, MMC_EXT_SANITIZE_START, 1);
+		if (ret) {
+			if ( ret != -(INTERNAL_POWEROFF_FLAG))
+				printf("Sanitize switch error %d\n", ret);
+			else
+				g_plr_state.poweroff_pos = start_sector;
+
+			return ret;
+		}
+
+		do {
+			if (mmc_get_card_status(&dev->host, &dev->card, &status)) {
+				dprintf(CRITICAL, "Failed to get card status after erase\n");
+				return -1;
+			}
+			/* Check if the response of erase command has eras skip status set */
+			if (status & MMC_R1_WP_ERASE_SKIP)
+				dprintf(CRITICAL, "Write Protect set for the region, only partial space was erased\n");
+
+			retry++;
+			udelay(10);
+			if (retry == MMC_MAX_CARD_STAT_RETRY) {
+				dprintf(CRITICAL, "Card status check timed out after sending erase command\n");
+				return -1;
+			}
+		} while(!(status & MMC_READY_FOR_DATA) || (MMC_CARD_STATUS(status) == MMC_PROG_STATE));
+	}
+
+	return 0;
+}
+#endif

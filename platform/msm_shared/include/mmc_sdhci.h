@@ -30,6 +30,12 @@
 #define __MMC_SDHCI_H__
 
 #include <sdhci.h>
+#if PLRTEST_ENABLE
+#include "plr_emmc_internal_state.h"
+#ifdef TRUE
+#undef TRUE
+#endif
+#endif
 
 /* Emmc Card bus commands */
 #define CMD0_GO_IDLE_STATE                        0
@@ -86,6 +92,24 @@
 
 /* EXT_CSD */
 /* Offsets in the ext csd */
+#if PLRTEST_ENABLE
+/* cache control */
+#define MMC_EXT_FLUSH_CACHE                   	32 //W
+#define MMC_EXT_CACHE_CTRL                    	33 //R/W
+#define MMC_EXT_CACHE_SIZE						249 //RO, 4 bytes
+/* packed */
+#define MMC_EXT_PACKED_FAILURE_INDEX			35 //RO
+#define MMC_EXT_PACKED_CMD_STATUS				36 //RO
+#define MMC_EXT_EXP_EVENTS_STATUS				54 //RO, 2 bytes
+#define MMC_EXT_EXP_EVENTS_CTRL					56 //R/W, 2 bytes
+#define MMC_EXT_SANITIZE_START					165 //W
+#define MMC_EXT_SEC_FEATURE_SUPPORT				231	//RO
+#define MMC_EXT_MAX_PACKED_WRITES				500 //RO
+#define MMC_EXT_MAX_PACKED_READS				501 //RO
+
+#define MMC_EXT_REV								192
+#endif
+
 #define MMC_EXT_CSD_RST_N_FUNC                    162
 #define MMC_EXT_MMC_BUS_WIDTH                     183
 #define MMC_EXT_MMC_HS_TIMING                     185
@@ -124,6 +148,40 @@
 #define REL_WR_SEC_C                              222
 #define PARTITION_ACCESS_MASK                     0x7
 #define MAX_RPMB_CMDS                             0x3
+
+#if PLRTEST_ENABLE
+/* packed */
+#define EXT_CSD_PACKED_EVENT_EN					BIT(3)
+#define EXT_CSD_PACKED_FAILURE					BIT(3)
+#define EXT_CSD_PACKED_GENERIC_ERROR			BIT(0)
+#define EXT_CSD_PACKED_INDEXED_ERROR			BIT(1)
+
+#define PACKED_CMD_VER          0x01
+#define PACKED_CMD_RD           0x01
+#define PACKED_CMD_WR           0x02
+
+#define MMC_CMD23_ARG_REL_WR    (1 << 31)
+#define MMC_CMD23_ARG_PACKED    ((0 << 31) | (1 << 30))
+#define MMC_CMD23_ARG_TAG_REQ   (1 << 29)
+
+#define DEV_STATUS_EXCEPTION_EVENT  (1 << 6)
+
+#define EXT_CSD_SEC_SANITIZE	(1 << 6)
+
+/* MMC_ERASE_GRP_DEF */
+#define EXT_CSD_MMC_ERASE_GRP_DEF_DISABLE		BIT(0)
+
+/* values for argumentn rw */
+#define READ	0
+#define WRITE	1
+#define OTHER	2
+
+/* command arguments for CMD38(erase) */
+#define NORMAL_ERASE	0x00000000
+#define SECURE_ERASE	0x80000000
+#define TRIM			0x00000001
+#define DISCARD			0x00000003
+#endif
 
 /* Command related */
 #define MMC_MAX_COMMAND_RETRY                     1000
@@ -235,6 +293,64 @@
 #define MMC_CARD_MMC(card) ((card->type == MMC_TYPE_STD_MMC) || \
 							(card->type == MMC_TYPE_MMCHC))
 
+#if PLRTEST_ENABLE
+#define container_of(ptr, type, member) \
+	((type *)((addr_t)(ptr) - offsetof(type, member)))
+
+#define SDHCI_SD(host)	\
+	MMC_CARD_SD((&container_of(host, struct mmc_device, host)->card))
+#define SDHCI_MMC(host)	\
+	MMC_CARD_MMC((&container_of(host, struct mmc_device, host)->card))
+typedef unsigned long  lbaint_t;
+/* packed cmd */
+enum {
+	MMC_PACKED_N_IDX = -1,
+	MMC_PACKED_N_ZERO,
+	MMC_PACKED_N_SINGLE,
+};
+
+enum mmc_packed_cmd {
+	MMC_PACKED_NONE = 0,
+	MMC_PACKED_WR_HDR,
+	MMC_PACKED_WRITE,
+	MMC_PACKED_READ,
+};
+
+enum mmc_packed_prepare {
+	MMC_PACKED_ADD = 1,
+	MMC_PACKED_PASS,
+	MMC_PACKED_INVALID,
+	MMC_PACKED_COUNT_FULL,
+	MMC_PACKED_BLOCKS_FULL,
+	MMC_PACKED_BLOCKS_OVER,
+	MMC_PACKED_CHANGE,
+};
+
+struct mmc_req {
+	struct list_node    req_list;
+	int                 cmd_flags;
+	uint32_t            start;
+	lbaint_t            blkcnt;
+	union {
+		char *dest;
+		const char *src; /* src buffers don't get written to */
+	};
+};
+
+struct mmc_packed {
+	struct list_node        packed_list;
+	uint32_t                packed_cmd_hdr[128];
+	lbaint_t                packed_blocks;
+	enum mmc_packed_cmd     packed_cmd;
+	int                     packed_retries;
+	int                     packed_fail_idx;
+	uint8_t                 packed_num;
+	uint32_t                packed_start_sector;
+	uint32_t                packed_data_size;
+	char*                   packed_data;
+};
+#endif
+
 enum part_access_type
 {
 	PART_ACCESS_DEFAULT = 0x0,
@@ -313,6 +429,11 @@ struct mmc_card {
 	struct mmc_csd csd;      /* CSD structure */
 	struct mmc_sd_scr scr;   /* SCR structure */
 	struct mmc_sd_ssr ssr;   /* SSR Register */
+#if PLRTEST_ENABLE
+	uint32_t mmc_max_blk_cnt;	/* Maximum Block Count */
+	struct mmc_packed packed_info;   /* packed cmd */
+	internal_info_t internal_info; /* Information about Internal Power */
+#endif
 };
 
 /* mmc device config data */
@@ -326,6 +447,14 @@ struct mmc_config_data {
 	uint8_t hs200_support; /* SDHC HS200 mode supported or not */
 	uint8_t hs400_support; /* SDHC HS400 mode supported or not */
 	uint8_t use_io_switch; /* IO pad switch flag for shared sdc controller */
+#if PLRTEST_ENABLE
+	uint8_t packed_event_en;
+	uint8_t max_packed_writes;
+	uint8_t max_packed_reads;
+	uint32_t cache_ctrl;
+	uint32_t cache_size;
+	uint32_t sector;
+#endif
 };
 
 /* mmc device structure */
@@ -345,7 +474,11 @@ uint32_t mmc_sdhci_read(struct mmc_device *dev, void *dest, uint64_t blk_addr, u
 /* API: Write requried number of blocks from source to card */
 uint32_t mmc_sdhci_write(struct mmc_device *dev, void *src, uint64_t blk_addr, uint32_t num_blocks);
 /* API: Erase len bytes (after converting to number of erase groups), from specified address */
+#if PLRTEST_ENABLE
+uint32_t mmc_sdhci_erase(struct mmc_device *dev, uint32_t blk_addr, uint64_t len, uint32_t sec);
+#else
 uint32_t mmc_sdhci_erase(struct mmc_device *dev, uint32_t blk_addr, uint64_t len);
+#endif
 /* API: Write protect or release len bytes (after converting to number of write protect groups) from specified start address*/
 uint32_t mmc_set_clr_power_on_wp_user(struct mmc_device *dev, uint32_t addr, uint64_t len, uint8_t set_clr);
 /* API: Get the WP status of write protect groups starting at addr */
@@ -356,4 +489,12 @@ void mmc_put_card_to_sleep(struct mmc_device *dev);
 bool mmc_set_drv_type(struct sdhci_host *host, struct mmc_card *card, uint8_t drv_type);
 /* API: Send the read & write command sequence to rpmb */
 uint32_t mmc_sdhci_rpmb_send(struct mmc_device *dev, struct mmc_command *cmd);
+
+#if PLRTEST_ENABLE
+uint32_t mmc_switch_cmd(struct sdhci_host *host, struct mmc_card *card, uint32_t access, uint32_t index, uint32_t value);
+uint32_t plr_mmc_sdhci_read_packed(struct mmc_device *dev, void *dest);
+uint32_t plr_mmc_sdhci_write_packed(struct mmc_device *dev, const void* src);
+int32_t plr_emmc_erase_for_poff(struct mmc_device *dev, uint32_t start_sector, uint32_t len, int type);
+uint32_t mmc_card_reinit(struct mmc_device *dev);
+#endif
 #endif

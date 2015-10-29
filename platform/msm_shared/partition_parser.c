@@ -389,18 +389,19 @@ static unsigned int mmc_boot_read_gpt(uint32_t block_size)
 			goto end;
 		}
 
-		parse_secondary_gpt = 1;
+		parse_secondary_gpt = 1; //[[ [LGE_UPDATE_E] DMS_SYSTEM 2015/7/11
 		ret = partition_parse_gpt_header(data, &first_usable_lba,
 						 &partition_entry_size,
 						 &header_size,
 						 &max_partition_count);
+
+		parse_secondary_gpt = 0;//[[ [LGE_UPDATE_E] DMS_SYSTEM 2015/7/11
 
 		if (ret) {
 			dprintf(CRITICAL,
 				"GPT: Primary and backup signatures invalid\n");
 			goto end;
 		}
-		parse_secondary_gpt = 0;
 	}
 	partition_0 = GET_LLWORD_FROM_BYTE(&data[PARTITION_ENTRIES_OFFSET]);
 	/* Read GPT Entries */

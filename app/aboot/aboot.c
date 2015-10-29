@@ -136,6 +136,9 @@ extern int target_laf_check_boot_into_laf(unsigned reboot_mode);
 #ifdef LGE_KILLSWITCH_UNLOCK
 static void erase_persistent_partition();
 #endif // LGE_KILLSWITCH_UNLOCK
+
+#include <reg.h>
+
 extern  bool target_use_signed_kernel(void);
 extern void platform_uninit(void);
 extern void target_uninit(void);
@@ -212,12 +215,6 @@ int m_bFotaMode = 0;
 
 #define ADD_OF(a, b) (UINT_MAX - b > a) ? (a + b) : UINT_MAX
 
-#ifdef LGE_WITH_DISABLE_FASTBOOT
-static bool force_disable_fastboot = true;
-#else
-static bool force_disable_fastboot = false;
-#endif
-
 #if USE_BOOTDEV_CMDLINE
 static const char *emmc_cmdline = " androidboot.bootdevice=";
 #else
@@ -261,8 +258,6 @@ static int auth_kernel_img = 0;
 
 static device_info device = {DEVICE_MAGIC, 0, 0, 0, 0, {0}, {0},{0}};
 static bool is_allow_unlock = 0;
-
-static char frp_ptns[2][8] = {"config","frp"};
 
 struct atag_ptbl_entry
 {
@@ -1264,7 +1259,6 @@ void on_kswitch_flag()
 
 		boot_into_laf = 0;
 		laf_mode = 0;
-		boot_into_chargerlogo = 0;
 		dprintf(INFO, "[KSwitch][%s] dload mode is disabled by kill switch\n", __func__);
 
 		return;
@@ -1761,6 +1755,15 @@ unified_boot:
 
 #endif /*WITH_LGE_DOWNLOAD*/
 
+#ifdef LGE_WATCHDOG_ENABLE_AT_LK
+	/* Enable Watchdog*/
+	writel(360415, 0x0B017010); // Bark Time
+	writel(458710, 0x0B017014); // Bite Time
+
+	writel(1, 0x0B017008); // Watchdog En
+	writel(1, 0x0B017004); // Watchdog Reset
+#endif
+
 	boot_linux((void *)hdr->kernel_addr, (void *)hdr->tags_addr,
 		   (const char *)hdr->cmdline, board_machtype(),
 		   (void *)hdr->ramdisk_addr, hdr->ramdisk_size);
@@ -2135,6 +2138,7 @@ void write_device_info_flash(device_info *dev)
 
 static int read_allow_oem_unlock(device_info *dev)
 {
+	const char *ptn_name = "frp";
 	unsigned offset;
 	int index;
 	unsigned long long ptn;
@@ -2142,15 +2146,11 @@ static int read_allow_oem_unlock(device_info *dev)
 	unsigned blocksize = mmc_get_device_blocksize();
 	char buf[blocksize];
 
-	index = partition_get_index(frp_ptns[0]);
+	index = partition_get_index(ptn_name);
 	if (index == INVALID_PTN)
 	{
-		index = partition_get_index(frp_ptns[1]);
-		if (index == INVALID_PTN)
-		{
-			dprintf(CRITICAL, "Neither '%s' nor '%s' partition found\n", frp_ptns[0],frp_ptns[1]);
-			return -1;
-		}
+		dprintf(CRITICAL, "No '%s' partition found\n", ptn_name);
+		return -1;
 	}
 
 	ptn = partition_get_offset(index);
@@ -2170,22 +2170,20 @@ static int read_allow_oem_unlock(device_info *dev)
 
 static int write_allow_oem_unlock(bool allow_unlock)
 {
+	const char *ptn_name = "frp";
 	unsigned offset;
+
 	int index;
 	unsigned long long ptn;
 	unsigned long long ptn_size;
 	unsigned blocksize = mmc_get_device_blocksize();
 	char buf[blocksize];
 
-	index = partition_get_index(frp_ptns[0]);
+	index = partition_get_index(ptn_name);
 	if (index == INVALID_PTN)
 	{
-		index = partition_get_index(frp_ptns[1]);
-		if (index == INVALID_PTN)
-		{
-			dprintf(CRITICAL, "Neither '%s' nor '%s' partition found\n", frp_ptns[0],frp_ptns[1]);
-			return -1;
-		}
+		dprintf(CRITICAL, "No '%s' partition found\n", ptn_name);
+		return -1;
 	}
 
 	ptn = partition_get_offset(index);
@@ -4057,7 +4055,7 @@ void aboot_init(const struct app_descriptor *app)
 	}
 #endif /*WITH_LGE_DOWNLOAD*/
 normal_boot:
-	if ((!boot_into_fastboot) || force_disable_fastboot)
+	if (!boot_into_fastboot)
 	{
 		if (target_is_emmc_boot())
 		{
@@ -4103,7 +4101,6 @@ normal_boot:
 	boot_into_chargerlogo = 0;
 	dprintf(INFO, "CHARGERLOGO: boot_into_chargerlogo = 0\n");
 #endif
-
 	/* initialize and start fastboot */
 	fastboot_init(target_get_scratch_address(), target_get_max_flash_size());
 

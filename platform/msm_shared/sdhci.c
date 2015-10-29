@@ -38,6 +38,7 @@
 #include <debug.h>
 #include <sdhci.h>
 #include <sdhci_msm.h>
+#include "plrtest/plr_emmc_internal.h"
 
 static void sdhci_dumpregs(struct sdhci_host *host)
 {
@@ -497,6 +498,63 @@ static uint8_t sdhci_cmd_complete(struct sdhci_host *host, struct mmc_command *c
 	 * Clear the transfer complete interrupt
 	 */
 	if (cmd->data_present || cmd->resp_type == SDHCI_CMD_RESP_R1B) {
+// joys,2015.08.14
+// Data transfer phase
+#ifdef PLRTEST_ENABLE
+		// Internal processing while DMA transfer --------------------------------------------------
+		if ( SDHCI_MMC(host) && cmd->trans_mode == SDHCI_MMC_WRITE )
+		{
+			if ( internal_processing_on_mmc(host, cmd->argument, cmd->data.num_blocks, PROCESS_PHA_DATA_TRANS) ) {
+				/* Transfer is complete, clear the interrupt bit */
+				REG_WRITE16(host, SDHCI_INT_STS_TRANS_COMPLETE, SDHCI_NRML_INT_STS_REG);
+				return U8_INTERNAL_POWEROFF_FLAG;
+			}
+		}
+
+		// joys,2015.08.14
+		// Busy Phase
+		if (cmd->data_present && SDHCI_MMC(host))
+		{
+			// Write busy
+			if (cmd->trans_mode == SDHCI_MMC_WRITE)
+			{
+				if ( internal_processing_on_mmc(host, cmd->argument, cmd->data.num_blocks, PROCESS_PHA_WRITE_BUSY) ) {
+					REG_WRITE16(host, SDHCI_INT_STS_TRANS_COMPLETE, SDHCI_NRML_INT_STS_REG);
+					return U8_INTERNAL_POWEROFF_FLAG;
+				}
+			}
+		} else if (SDHCI_MMC(host)) {
+			// Cache flush busy
+			if (cmd->cmd_index == CMD6_SWITCH_FUNC  &&
+					((cmd->argument >> 16) & 0xff) == MMC_EXT_FLUSH_CACHE) {
+
+				if ( internal_processing_on_mmc(host, cmd->argument, 0, PROCESS_PHA_CACHE_FLUSH) ) {
+					REG_WRITE16(host, SDHCI_INT_STS_TRANS_COMPLETE, SDHCI_NRML_INT_STS_REG);
+					return U8_INTERNAL_POWEROFF_FLAG;
+				}
+			}
+			// Erase & Trim & Discard
+			else if (cmd->cmd_index == CMD38_ERASE) {
+				if ( internal_processing_on_mmc(host, cmd->argument, 0, PROCESS_PHA_ERASE) ) {
+					REG_WRITE16(host, SDHCI_INT_STS_TRANS_COMPLETE, SDHCI_NRML_INT_STS_REG);
+					return U8_INTERNAL_POWEROFF_FLAG;
+				}
+			}
+			else if (cmd->cmd_index == CMD6_SWITCH_FUNC  &&
+					((cmd->argument >> 16) & 0xff) == MMC_EXT_SANITIZE_START) {
+
+				if ( internal_processing_on_mmc(host, cmd->argument, 0, PROCESS_PHA_SANITIZE) ) {
+					REG_WRITE16(host, SDHCI_INT_STS_TRANS_COMPLETE, SDHCI_NRML_INT_STS_REG);
+					return U8_INTERNAL_POWEROFF_FLAG;
+				}
+			}
+		}
+
+		// ------------------------------------------------------------------------------------------
+#endif
+		if(cmd->cmd_index == CMD8_SEND_EXT_CSD)
+			printf("\n[%d] SDHCI_NRML_INT_STS_REG = 0x%x\n", __LINE__, REG_READ16(host, SDHCI_NRML_INT_STS_REG));
+
 		do {
 			int_status = REG_READ16(host, SDHCI_NRML_INT_STS_REG);
 
@@ -868,7 +926,11 @@ uint32_t sdhci_send_command(struct sdhci_host *host, struct mmc_command *cmd)
 		 */
 		if (cmd->data.num_blocks > 1) {
 			if (cmd->cmd23_support) {
+#if PLRTEST_ENABLE
+				trans_mode |= SDHCI_TRANS_MULTI | SDHCI_BLK_CNT_EN;
+#else
 				trans_mode |= SDHCI_TRANS_MULTI | SDHCI_AUTO_CMD23_EN | SDHCI_BLK_CNT_EN;
+#endif
 				REG_WRITE32(host, cmd->data.num_blocks, SDHCI_ARG2_REG);
 			}
 			else
@@ -883,12 +945,20 @@ uint32_t sdhci_send_command(struct sdhci_host *host, struct mmc_command *cmd)
 	REG_WRITE16(host, SDHCI_PREP_CMD(cmd->cmd_index, flags), SDHCI_CMD_REG);
 
 	/* Command complete sequence */
+#if PLRTEST_ENABLE
+	ret = (uint32_t)sdhci_cmd_complete(host, cmd);
+	if (ret)
+	{
+		ret = (ret == U8_INTERNAL_POWEROFF_FLAG) ? -INTERNAL_POWEROFF_FLAG : 1;
+		goto err;
+	}
+#else /* org codes */
 	if (sdhci_cmd_complete(host, cmd))
 	{
 		ret = 1;
 		goto err;
 	}
-
+#endif
 	/* Invalidate the cache only for read operations */
 	if (cmd->trans_mode == SDHCI_MMC_READ)
 	{

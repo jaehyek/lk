@@ -58,5 +58,8 @@ void console_start(void);
 void console_register_commands(cmd_block *block);
 int console_run_command(const char *string);
 
+#if PLRTEST_ENABLE
+int read_line(char *buffer, int len);
+#endif
 #endif
 
